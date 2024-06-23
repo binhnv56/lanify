@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import threading
 from flask import Flask, jsonify
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -15,27 +16,68 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 # Configuration
 CHROME_VERSION = '124.0.6367.78'
-NODEPAY_EXTENSION_ID = 'lgmpfmgeabnnlemejacfljbmonaomfmm'
+LANIFY_EXTENSION_ID = 'fjkmocmlejbiaohijecbmdjpaohapdom'
 REKTCAPTCHA_EXTENSION_ID = 'bbdhfoclddncoaomddgkaaphcnddbpdh'
-NODEPAY_EXTENSION_OUTPUT_FILE = "nodepay_extension.crx"
+LANIFY_EXTENSION_OUTPUT_FILE = "./lanify_extension"
 REKTCAPTCHA_EXTENSION_OUTPUT_FILE = "rektcaptcha_extension.crx"
-LOGIN_URL = 'https://app.nodepay.ai/'
+LOGIN_URL = 'https://app.lanify.ai/'
 REKTCAPTCHA_SETTING_URL = f'chrome-extension://{REKTCAPTCHA_EXTENSION_ID}/popup.html'
-NODEPAY_EXTENSION_PAGE = f'chrome-extension://{NODEPAY_EXTENSION_ID}/index.html'
+LANIFY_EXTENSION_PAGE = f'chrome-extension://{LANIFY_EXTENSION_ID}/src/pages/popup/index.html'
 
 # Environment variables
-USER = os.getenv('NODEPAY_USER', '')
-PASSW = os.getenv('NODEPAY_PASS', '')
-PROXY = os.getenv('NODEPAY_PROXY', '')
+USER = os.getenv('LANIFY_USER', '')
+PASSW = os.getenv('LANIFY_PASS', '')
+PROXY = os.getenv('LANIFY_PROXY', '')
 ALLOW_DEBUG = os.getenv('ALLOW_DEBUG', 'False').lower() in ('true', '1', 't')
+IMGUR_CLIENT_ID = os.getenv('IMGUR_CLIENT_ID', '')
 
 if not USER or not PASSW:
     raise EnvironmentError(
-        'Please set NODEPAY_USER and NODEPAY_PASS env variables')
+        'Please set LANIFY_USER and LANIFY_PASS env variables')
 
 if ALLOW_DEBUG:
     print('Debugging is enabled! This will generate a screenshot and console logs on error!')
+    if not IMGUR_CLIENT_ID:
+        raise EnvironmentError(
+            'Please set IMGUR_CLIENT_ID env variables')
 
+# Function to generate error report
+def generate_error_report(driver):
+    if not ALLOW_DEBUG:
+        return
+
+    try:
+        # Take a screenshot
+        screenshot_path = 'error.png'
+        driver.save_screenshot(screenshot_path)
+
+        # Get console logs
+        logs = driver.get_log('browser')
+        log_path = 'error.log'
+        with open(log_path, 'w') as f:
+            for log in logs:
+                f.write(str(log))
+                f.write('\n')
+
+        # Upload the screenshot to Imgur
+        url = 'https://api.imgur.com/3/upload'
+        headers = {'Authorization': f'Client-ID {IMGUR_CLIENT_ID}'}
+        with open(screenshot_path, 'rb') as image_file:
+            files = {'image': image_file}
+            response = requests.post(url, headers=headers, files=files)
+
+        if response.status_code == 200:
+            data = response.json()
+            image_url = data['data']['link']
+            print('Image URL:', image_url)
+        else:
+            print(f'Failed to upload screenshot. Status code: {response.status_code}')
+            print('Response:', response.text)
+
+        print('Error report generated! Provide the above information to the developer for debugging purposes.')
+
+    except Exception as e:
+        print(f'An error occurred while generating the error report: {str(e)}')
 
 def check_exists_by_xpath(driver, xpath):
     try:
@@ -63,24 +105,6 @@ def download_crx(extension_id, output_file, chrome_version):
         raise Exception(
             f"Failed to download the extension. Status code: {response.status_code}")
 
-
-def generate_error_report(driver):
-    """Generate error report with screenshot and browser logs"""
-    if not ALLOW_DEBUG:
-        return
-    driver.save_screenshot('error.png')
-    logs = driver.get_log('browser')
-    with open('error.log', 'w') as f:
-        for log in logs:
-            f.write(str(log))
-            f.write('\n')
-    url = 'https://imagebin.ca/upload.php'
-    files = {'file': ('error.png', open('error.png', 'rb'), 'image/png')}
-    response = requests.post(url, files=files)
-    print(response.text)
-    print('Error report generated! Provide the above information to the developer for debugging purposes.')
-
-
 def configure_driver():
     """Configure Chrome WebDriver options"""
     options = webdriver.ChromeOptions()
@@ -88,7 +112,7 @@ def configure_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument('--no-sandbox')
     options.add_extension(REKTCAPTCHA_EXTENSION_OUTPUT_FILE)
-    options.add_extension(NODEPAY_EXTENSION_OUTPUT_FILE)
+    options.add_argument(f"--load-extension={LANIFY_EXTENSION_OUTPUT_FILE}")
     if PROXY:
         print('Proxy detected, setting proxy to:', PROXY)
         options.add_argument(f'--proxy-server={PROXY}')
@@ -116,35 +140,49 @@ def set_desktop_resolution(driver, width=1024, height=768):
 
 
 def login(driver, user, password):
-    """Log in to the NodePay application"""
-    driver.get(LOGIN_URL)
+    """Log in to the lanify application"""
+    driver.get(LANIFY_EXTENSION_PAGE)
     set_desktop_resolution(driver)
     sleep = 0
     while True:
         try:
-            close_button = WebDriverWait(driver, 5).until(
+            WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '//button[@aria-label="Close"]'))
+                    (By.XPATH, '//a[@href="https://app.lanify.ai"]'))
             )
-            if close_button.is_displayed():
-                close_button.click()
-                print('Close button clicked! Proceeding with login.')
-                continue
-        except (TimeoutException, NoSuchElementException):
-            pass
+            break
+        except TimeoutException:
+            time.sleep(1)
+            print('Loading lanify extension...')
+            sleep += 1
+            if sleep > 15:
+                raise TimeoutException(
+                    'Could not load lanify extension! Exiting...')
 
+    driver.find_element(By.XPATH, '//a[@href="https://app.lanify.ai"]').click()
+    # Wait for the new tab to open
+    time.sleep(2)  # Adjust sleep time if necessary
+
+    # Get a list of all window handles
+    window_handles = driver.window_handles
+
+    # Switch to the new tab (the last handle in the list)
+    driver.switch_to.window(window_handles[-1])
+
+    sleep = 0
+    while True:
         try:
             WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '//*[@id="basic_user"]'))
+                    (By.XPATH, '//input[@placeholder="Username or Email"]'))
             )
             WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '//*[@id="basic_password"]'))
+                    (By.XPATH, '//input[@placeholder="Password"]'))
             )
             WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '//*[@type="submit"]'))
+                    (By.XPATH, '//button[contains(text(), "Access my account")]'))
             )
             break
         except TimeoutException:
@@ -152,25 +190,27 @@ def login(driver, user, password):
             print('Loading login form...')
             sleep += 1
             if sleep > 15:
+                generate_error_report(driver)
                 raise TimeoutException('Could not load login form! Exiting...')
 
     print('Waiting for captcha to be solved...')
-    wait_capcha_solved(driver)
-    driver.find_element(By.XPATH, '//*[@id="basic_user"]').send_keys(user)
+    driver.find_element(By.XPATH, '//input[@placeholder="Username or Email"]').send_keys(user)
     driver.find_element(
-        By.XPATH, '//*[@id="basic_password"]').send_keys(password)
-    driver.find_element(By.XPATH, '//*[@type="submit"]').click()
-
+        By.XPATH, '//input[@placeholder="Password"]').send_keys(password)
+    wait_capcha_solved(driver)
+    driver.find_element(By.XPATH, '//button[contains(text(), "Access my account")]').click()
+    time.sleep(5)
     sleep = 0
     while True:
         try:
-            driver.find_element(By.XPATH, '//*[contains(text(), "Connect")]')
+            driver.find_element(By.XPATH, '//*[contains(text(), "Dashboard")]')
             break
         except:
             time.sleep(1)
             print('Logging in...')
             sleep += 1
             if sleep > 30:
+                generate_error_report(driver)
                 raise TimeoutException(
                     'Could not login! Double check your username and password! Exiting...')
 
@@ -221,26 +261,27 @@ def wait_capcha_solved(driver):
         except Exception as e:
             pass
         
-        time.sleep(5)
+        time.sleep(2)
         print('Solving captcha...')
         sleep += 1
         
-        if sleep > 30:
+        if sleep > 100:
+            generate_error_report(driver)
             raise TimeoutException('Could not resolve captcha! Exiting...')
     
     # ***************** Back to main window **************************************
     driver.switch_to.window(mainWin)
 
-def wait_for_dashboard(driver):
-    """Access nodepay extension page"""
-    driver.get(NODEPAY_EXTENSION_PAGE)
+def wait_for_dashboard(driver, password):
+    """Access lanify extension page"""
+    driver.get(LANIFY_EXTENSION_PAGE)
     """Wait for the dashboard to load after logging in"""
     sleep = 0
     while True:
         try:
-            WebDriverWait(driver, 30).until(
+            WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located(
-                    (By.XPATH, '//a[contains(@class, "rounded-lg") and contains(@href, "dashboard")]/span[contains(text(), "Open Dashboard")]'))
+                    (By.XPATH, '//input[@placeholder="Enter your password"]'))
             )
             print('Found the "Open Dashboard" link!')
             break
@@ -249,46 +290,74 @@ def wait_for_dashboard(driver):
             print('Loading connection...', e)
             sleep += 1
             if sleep > 30:
+                generate_error_report(driver)
                 raise TimeoutException('Could not load connection! Exiting...')
-
+    driver.find_element(
+        By.XPATH, '//input[@placeholder="Enter your password"]').send_keys(password)
+    time.sleep(1)
+    driver.find_element(By.XPATH, '//button[contains(text(), "Unlock")]').click()
 
 def get_data(driver):
     """Retrieve data from the dashboard"""
     try:
+        # Locate the network quality element
         network_quality_element = WebDriverWait(driver, 10).until(
             EC.visibility_of_element_located(
-                (By.XPATH, "//span[contains(text(), 'Network Quality')]"))
+                (By.XPATH, "//p[contains(text(), 'Network quality:')]")
+            )
         )
-        network_quality = network_quality_element.text.split(":")[1].strip()
+        # Extract the network quality percentage
+        network_quality_text = network_quality_element.text
+        network_quality = network_quality_text.split(":")[1].strip().replace('%', '')
     except Exception as e:
         network_quality = False
+        generate_error_report(driver)
         print(f'Could not get network quality: {e}')
-        generate_error_report(driver)
 
     try:
-        earnings_element = WebDriverWait(driver, 10).until(
+        # Locate the connection status div
+        connected_div = WebDriverWait(driver, 10).until(
             EC.visibility_of_element_located(
-                (By.XPATH, "//div[@class='h-[64px] bg-grey-primary rounded-lg py-3 px-6 flex flex-col items-center justify-between']/div/span[@class='text-16px font-bold mr-1 truncate']"))
+                (By.XPATH, "//div[contains(@class, 'flex items-center') and contains(@class, 'bg-[#1E2428]') and contains(text(), 'Connected')]")
+            )
         )
-        epoch_earnings = earnings_element.text
-    except Exception as e:
-        epoch_earnings = False
-        print(f'Could not get earnings: {e}')
-        generate_error_report(driver)
-
-    try:
-        badges = WebDriverWait(driver, 10).until(
-            EC.visibility_of_all_elements_located(
-                (By.XPATH, "//span[@class='font-bold text-green']"))
-        )
-        connected = badges[0].text if badges else False
+        # Extract the connection status text
+        connected = 'Connected' if connected_div else False
     except Exception as e:
         connected = False
-        print(f'Could not get connection status: {e}')
         generate_error_report(driver)
+        print(f'Could not get connection status: {e}')
 
-    return {'connected': connected, 'network_quality': network_quality, 'epoch_earnings': epoch_earnings}
+    return {'connected': connected, 'network_quality': network_quality}
 
+def reconnect_extension(driver):
+        try:
+            WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, '//button[contains(text(), "Reconnect")]'))
+            )
+            print('Found the "Reconnect" link!')
+            driver.find_element(By.XPATH, '//button[contains(text(), "Reconnect")]').click()
+        except Exception as e:
+            # No need to reconnect extension, continue
+            return
+
+def refresh_task(driver):
+    print("Refresh task started....")
+    try:
+        while True:
+            data = get_data(driver)
+            print(data)
+            time.sleep(30)  # Wait for 30 seconds
+            driver.refresh()  # Refresh the page
+            time.sleep(10)
+            reconnect_extension(driver)
+
+    except KeyboardInterrupt:
+        print("Refresh task stopped by user")
+
+    finally:
+        driver.quit()
 
 app = Flask(__name__)
 
@@ -310,9 +379,6 @@ if __name__ == '__main__':
     print('Downloading extension rektcaptcha...')
     download_crx(REKTCAPTCHA_EXTENSION_ID,
                  REKTCAPTCHA_EXTENSION_OUTPUT_FILE, CHROME_VERSION)
-    print('Downloading extension nodepay...')
-    download_crx(NODEPAY_EXTENSION_ID,
-                 NODEPAY_EXTENSION_OUTPUT_FILE, CHROME_VERSION)
     print('Downloaded! Installing extension and driver manager...')
 
     options = configure_driver()
@@ -323,11 +389,13 @@ if __name__ == '__main__':
         enable_auto_capcha()
         login(driver, USER, PASSW)
         print('Logged in! Waiting for connection...')
-        wait_for_dashboard(driver)
+        wait_for_dashboard(driver, PASSW)
+        # Start the Selenium task in a separate thread
+        selenium_thread = threading.Thread(target=refresh_task, args=(driver,))
+        selenium_thread.start()
         print('Connected! Starting API...')
         app.run(host='0.0.0.0', port=80, debug=False)
     except Exception as e:
         print(f'An error occurred: {e}')
-        generate_error_report(driver)
     finally:
         driver.quit()

@@ -1,28 +1,29 @@
-# NodePay
-An unofficial Docker Image for [app.nodepay.ai](https://app.nodepay.ai/register?ref=3iXL7IuXXwKQVE6)
-Available on [Docker Hub](https://hub.docker.com/r/double2trouble/nodepay)
+# LANIFY
+An unofficial Docker Image for [app.lanify.ai](https://app.lanify.ai/register?ref=kDEOfkxHgs3qVAQ)
+Available on [Docker Hub](https://hub.docker.com/r/double2tbinhnv56rouble/lanify)
 
-## What's NodePay?
-NodePay allows you to earn passive income by sharing your network bandwidth
+## What's LANIFY?
+LANIFY allows you to earn passive income by sharing your network bandwidth
 
 ## How to get started?
-1. Register a Nodepay Account if you don't have one already: [app.nodepay.ai](https://app.nodepay.ai/register?ref=3iXL7IuXXwKQVE6)
+1. Register a LANIFY Account if you don't have one already: [app.lanify.ai](https://app.lanify.ai/register?ref=kDEOfkxHgs3qVAQ)
 2. Either build this image from source, or download it from Docker Hub
-3. Set envriomental variables to their respective values: NODEPAY_USER and NODEPAY_PASS
+3. Set envriomental variables to their respective values: LANIFY_USER and LANIFY_PASS
 4. You're good to go! Once started, the docker exposes your current network status and lifetime earnings on port 80
 
 ### Docker Run Command
 ```
 docker run -d \
-    --name nodepay \
+    --name lanify \
     -p 8080:80 \
-    -e NODEPAY_USER=myuser@mail.com \
-    -e NODEPAY_PASS=mypass \
-    -e ALLOW_DEBUG=False \
-    double2trouble/nodepay:latest
+    -e LANIFY_USER=myuser@mail.com \
+    -e LANIFY_PASS=mypass \
+    -e ALLOW_DEBUG=True \
+    -e IMGUR_CLIENT_ID=your_client_id
+    binhnv56/lanify:latest
 ```
 
-Please replace 8080 with the port you want to be able to access the status with, as well as NODEPAY_USER and NODEPAY_PASS
+Please replace 8080 with the port you want to be able to access the status with, as well as LANIFY_USER and LANIFY_PASS
 
 ## Separate thanks
 I would like to mention [kgregor98](https://github.com/kgregor98/grass) and his project Grass for inspiring me to create this.
